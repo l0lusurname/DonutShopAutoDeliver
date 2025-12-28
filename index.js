@@ -24,7 +24,7 @@ const CONFIG = {
 
   // Server Settings
   server: {
-    port: parseInt(process.env.SERVER_PORT) || 3000,
+    port: parseInt(process.env.PORT || process.env.SERVER_PORT || '3001'),
   },
 
   // Custom Field Name
