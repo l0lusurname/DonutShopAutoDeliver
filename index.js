@@ -82,14 +82,19 @@ function createBot() {
     port: CONFIG.minecraft.port,
     username: CONFIG.minecraft.username,
     version: CONFIG.minecraft.version,
+    auth: 'microsoft', // Use Microsoft authentication
   };
 
-  // Only add password if it's set
-  if (CONFIG.minecraft.password) {
-    botOptions.password = CONFIG.minecraft.password;
-  }
-
+  console.log('\n🔐 Starting Microsoft authentication...');
+  console.log('You will receive a code to enter at https://microsoft.com/link\n');
+  
   bot = mineflayer.createBot(botOptions);
+
+  // Listen for Microsoft auth events
+  bot._client.on('session', (session) => {
+    console.log('✓ Microsoft authentication successful!');
+    console.log('Session saved for future use.');
+  });
 
   bot.once('spawn', () => {
     console.log('✓ Bot connected to Minecraft server');
@@ -211,7 +216,7 @@ async function sendDiscordNotification(type, data) {
   }
 }
 
-// Parse Discord webhook data
+// Parse Discord webhook data from SellAuth
 function parseDiscordWebhook(body) {
   // Check if this is from a SellAuth Discord notification
   if (!body.embeds || body.embeds.length === 0) {
@@ -220,7 +225,11 @@ function parseDiscordWebhook(body) {
 
   const embed = body.embeds[0];
   
-  // Extract data from embed fields
+  // Check if this is a "New Sale" notification
+  if (!embed.title || !embed.title.toLowerCase().includes('sale')) {
+    return null;
+  }
+
   const data = {
     invoiceId: null,
     productName: null,
@@ -228,45 +237,55 @@ function parseDiscordWebhook(body) {
     inGameName: null,
     productId: null,
     status: 'completed',
+    price: 0,
   };
 
-  // Parse embed title to check if it's a purchase notification
-  if (!embed.title || !embed.title.toLowerCase().includes('purchase')) {
+  // Parse the description which contains all the sale info
+  if (!embed.description) {
     return null;
   }
 
-  // Parse fields from the embed
-  if (embed.fields) {
-    for (const field of embed.fields) {
-      const name = field.name.toLowerCase();
-      const value = field.value;
-
-      if (name.includes('invoice') || name.includes('order')) {
-        data.invoiceId = value;
-      } else if (name.includes('product') || name.includes('item')) {
-        data.productName = value;
-      } else if (name.includes('quantity') || name.includes('amount')) {
-        const qty = parseInt(value);
-        if (!isNaN(qty)) data.quantity = qty;
-      } else if (name.includes(CONFIG.customFieldName) || name.includes('username') || name.includes('ign')) {
-        data.inGameName = value;
-      } else if (name.includes('product id') || name.includes('id')) {
-        data.productId = value;
+  const lines = embed.description.split('\n');
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    
+    // Invoice ID
+    if (line.startsWith('Invoice ID')) {
+      const nextLine = lines[i + 1];
+      if (nextLine) data.invoiceId = nextLine.trim();
+    }
+    
+    // Product Name
+    else if (line.startsWith('Product')) {
+      const nextLine = lines[i + 1];
+      if (nextLine) data.productName = nextLine.trim();
+    }
+    
+    // Price (contains quantity info like "30 x $0.15")
+    else if (line.startsWith('Price')) {
+      const nextLine = lines[i + 1];
+      if (nextLine) {
+        // Parse "30 x $0.15" format
+        const match = nextLine.match(/(\d+)\s*x/);
+        if (match) {
+          data.quantity = parseInt(match[1]);
+        }
+        data.price = nextLine.trim();
       }
+    }
+    
+    // In game name (custom field)
+    else if (line.startsWith('In game name') || line.toLowerCase().includes(CONFIG.customFieldName)) {
+      const nextLine = lines[i + 1];
+      if (nextLine) data.inGameName = nextLine.trim();
     }
   }
 
-  // Also check description for information
-  if (embed.description) {
-    const lines = embed.description.split('\n');
-    for (const line of lines) {
-      if (line.toLowerCase().includes(CONFIG.customFieldName) || line.toLowerCase().includes('username')) {
-        const match = line.match(/:\s*(.+)/);
-        if (match && !data.inGameName) {
-          data.inGameName = match[1].trim();
-        }
-      }
-    }
+  // Validate we have the required data
+  if (!data.inGameName) {
+    console.log('⚠ Missing in-game name in webhook');
+    return null;
   }
 
   return data;
@@ -282,10 +301,6 @@ async function processPurchase(data) {
   if (!data.inGameName) {
     const error = 'No in-game name found in webhook data';
     console.error('✗', error);
-    await sendDiscordNotification('payment_error', {
-      error,
-      invoiceId: data.invoiceId,
-    });
     return;
   }
 
@@ -313,10 +328,6 @@ async function processPurchase(data) {
   if (!productConfig) {
     const error = `No configuration found for product: ${data.productName}`;
     console.log('⚠', error);
-    await sendDiscordNotification('payment_error', {
-      error,
-      invoiceId: data.invoiceId,
-    });
     return;
   }
 
@@ -336,15 +347,6 @@ async function processPurchase(data) {
   queueCommand(payCommand);
 
   console.log(`✓ Queued payment: ${formattedAmount} to ${data.inGameName}`);
-
-  // Send success notification
-  await sendDiscordNotification('payment_success', {
-    inGameName: data.inGameName,
-    amount: formattedAmount,
-    productName: data.productName,
-    quantity: data.quantity,
-    invoiceId: data.invoiceId || 'Unknown',
-  });
 }
 
 // Format amount (convert 1000000 to "1m", 5000000 to "5m", etc.)
@@ -361,7 +363,59 @@ function formatAmount(amount) {
 const app = express();
 app.use(bodyParser.json());
 
-// Webhook endpoint for Discord
+// Webhook endpoint for SellAuth Direct HTTP
+app.post('/webhook/sellauth', async (req, res) => {
+  console.log('\n=== SellAuth Direct Webhook Received ===');
+
+  try {
+    const invoice = req.body;
+    
+    // Extract invoice data
+    const data = {
+      invoiceId: invoice.id || invoice.invoice_id,
+      productName: null,
+      quantity: 1,
+      inGameName: null,
+      status: invoice.status,
+    };
+
+    // Only process completed invoices
+    if (data.status !== 'completed') {
+      console.log('⚠ Invoice not completed, skipping');
+      return res.status(200).send('OK');
+    }
+
+    // Extract custom field (in-game name)
+    if (invoice.custom_fields && typeof invoice.custom_fields === 'object') {
+      data.inGameName = invoice.custom_fields[CONFIG.customFieldName];
+    } else if (invoice.custom_field_values && Array.isArray(invoice.custom_field_values)) {
+      const field = invoice.custom_field_values.find(f => f.name === CONFIG.customFieldName);
+      if (field) data.inGameName = field.value;
+    }
+
+    if (!data.inGameName) {
+      console.error('✗ No in-game name found in invoice');
+      return res.status(200).send('OK');
+    }
+
+    // Process invoice items
+    if (invoice.items && Array.isArray(invoice.items)) {
+      for (const item of invoice.items) {
+        data.productName = item.product_name || item.name;
+        data.quantity = item.quantity || 1;
+
+        await processPurchase(data);
+      }
+    }
+
+    res.status(200).send('OK');
+  } catch (error) {
+    console.error('✗ Error processing SellAuth webhook:', error);
+    res.status(500).send('Internal Server Error');
+  }
+});
+
+// Webhook endpoint for Discord (keep for backwards compatibility)
 app.post('/webhook/discord', async (req, res) => {
   console.log('\n=== Discord Webhook Received ===');
 
@@ -450,13 +504,15 @@ function start() {
   // Start webhook server
   app.listen(CONFIG.server.port, () => {
     console.log(`✓ Webhook server running on port ${CONFIG.server.port}`);
-    console.log(`Discord Webhook URL: http://your-server:${CONFIG.server.port}/webhook/discord`);
-    console.log(`Manual Trigger URL: http://your-server:${CONFIG.server.port}/webhook/manual`);
-    console.log('\nSetup Instructions:');
-    console.log('1. In SellAuth, go to Settings > Integrations > Discord');
-    console.log('2. Set your Discord webhook URL (get from Discord channel settings)');
-    console.log('3. SellAuth will send purchase notifications to Discord');
-    console.log('4. Forward those notifications to this bot using a Discord webhook proxy or Zapier\n');
+    console.log(`\n📡 Webhook Endpoints:`);
+    console.log(`   SellAuth Direct: http://localhost:${CONFIG.server.port}/webhook/sellauth`);
+    console.log(`   Discord Forward:  http://localhost:${CONFIG.server.port}/webhook/discord`);
+    console.log(`   Manual Trigger:   http://localhost:${CONFIG.server.port}/webhook/manual`);
+    console.log(`\n🚀 Setup with ngrok:`);
+    console.log(`   1. Run: ngrok http ${CONFIG.server.port}`);
+    console.log(`   2. Copy the https URL (e.g., https://abc123.ngrok.io)`);
+    console.log(`   3. In SellAuth: Settings > Notifications > Order Completed > HTTP`);
+    console.log(`   4. Enter: https://abc123.ngrok.io/webhook/sellauth\n`);
   });
 }
 
