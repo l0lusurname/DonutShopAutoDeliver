@@ -249,63 +249,59 @@ function parseDiscordWebhook(body) {
     price: 0,
   };
 
-  // Parse the description which contains all the sale info
-  if (!embed.description) {
-    console.log('⚠ No description found in embed');
-    return null;
-  }
-
-  console.log('📝 Description:', embed.description);
-
-  const lines = embed.description.split('\n');
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
+  // Parse fields (SellAuth uses fields format)
+  if (embed.fields && Array.isArray(embed.fields)) {
+    console.log('📋 Found fields:', embed.fields.length);
     
-    // Remove markdown bold markers
-    const cleanLine = line.replace(/\*\*/g, '');
-    
-    // Invoice ID - look for the line that says "Invoice ID" and get the next line
-    if (cleanLine === 'Invoice ID' && i + 1 < lines.length) {
-      data.invoiceId = lines[i + 1].trim();
-      console.log('✓ Found Invoice ID:', data.invoiceId);
-    }
-    
-    // Product Name - look for the line that says "Product" and get the next line
-    else if (cleanLine === 'Product' && i + 1 < lines.length) {
-      data.productName = lines[i + 1].trim();
-      console.log('✓ Found Product:', data.productName);
-    }
-    
-    // Price (contains quantity info like "30 x $0.15")
-    else if (cleanLine === 'Price' && i + 1 < lines.length) {
-      const priceLine = lines[i + 1].trim();
-      data.price = priceLine;
+    for (const field of embed.fields) {
+      const fieldName = field.name.trim();
+      const fieldValue = typeof field.value === 'string' ? field.value.trim() : String(field.value);
       
-      // Parse "30 x $0.15" format
-      const match = priceLine.match(/(\d+)\s*x/);
-      if (match) {
-        data.quantity = parseInt(match[1]);
-        console.log('✓ Found Quantity:', data.quantity);
+      console.log(`  Field: "${fieldName}" = "${fieldValue}"`);
+      
+      // Invoice ID
+      if (fieldName === 'Invoice ID') {
+        data.invoiceId = fieldValue;
+        console.log('✓ Found Invoice ID:', data.invoiceId);
       }
-    }
-    
-    // In game name - look for exact match with your custom field name
-    else if (cleanLine === 'In game name' && i + 1 < lines.length) {
-      data.inGameName = lines[i + 1].trim();
-      console.log('✓ Found In game name:', data.inGameName);
-    }
-    // Also try with the CONFIG custom field name
-    else if (cleanLine === CONFIG.customFieldName && i + 1 < lines.length) {
-      data.inGameName = lines[i + 1].trim();
-      console.log('✓ Found custom field:', data.inGameName);
+      
+      // Product Name
+      else if (fieldName === 'Product') {
+        data.productName = fieldValue;
+        console.log('✓ Found Product:', data.productName);
+      }
+      
+      // Price (contains quantity info like "30 x $0.15")
+      else if (fieldName === 'Price') {
+        data.price = fieldValue;
+        
+        // Parse "30 x $0.15" format
+        const match = fieldValue.match(/(\d+)\s*x/);
+        if (match) {
+          data.quantity = parseInt(match[1]);
+          console.log('✓ Found Quantity:', data.quantity);
+        }
+      }
+      
+      // In game name - check exact match
+      else if (fieldName === 'In game name') {
+        data.inGameName = fieldValue;
+        console.log('✓ Found In game name:', data.inGameName);
+      }
+      // Also try with the CONFIG custom field name
+      else if (fieldName === CONFIG.customFieldName) {
+        data.inGameName = fieldValue;
+        console.log('✓ Found custom field:', data.inGameName);
+      }
     }
   }
 
   // Validate we have the required data
   if (!data.inGameName) {
     console.log('⚠ Missing in-game name in webhook');
-    console.log('Available lines:', lines.filter(l => l.trim()).map(l => l.replace(/\*\*/g, '')));
+    if (embed.fields) {
+      console.log('Available fields:', embed.fields.map(f => f.name));
+    }
     return null;
   }
 
