@@ -223,8 +223,11 @@ async function sendDiscordNotification(type, data) {
 
 // Parse Discord webhook data from SellAuth
 function parseDiscordWebhook(body) {
+  console.log('\n🔍 Parsing Discord webhook...');
+  
   // Check if this is from a SellAuth Discord notification
   if (!body.embeds || body.embeds.length === 0) {
+    console.log('⚠ No embeds found');
     return null;
   }
 
@@ -232,6 +235,7 @@ function parseDiscordWebhook(body) {
   
   // Check if this is a "New Sale" notification
   if (!embed.title || !embed.title.toLowerCase().includes('sale')) {
+    console.log('⚠ Not a sale notification, title:', embed.title);
     return null;
   }
 
@@ -247,52 +251,65 @@ function parseDiscordWebhook(body) {
 
   // Parse the description which contains all the sale info
   if (!embed.description) {
+    console.log('⚠ No description found in embed');
     return null;
   }
+
+  console.log('📝 Description:', embed.description);
 
   const lines = embed.description.split('\n');
   
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     
-    // Invoice ID
-    if (line.startsWith('Invoice ID')) {
-      const nextLine = lines[i + 1];
-      if (nextLine) data.invoiceId = nextLine.trim();
+    // Remove markdown bold markers
+    const cleanLine = line.replace(/\*\*/g, '');
+    
+    // Invoice ID - look for the line that says "Invoice ID" and get the next line
+    if (cleanLine === 'Invoice ID' && i + 1 < lines.length) {
+      data.invoiceId = lines[i + 1].trim();
+      console.log('✓ Found Invoice ID:', data.invoiceId);
     }
     
-    // Product Name
-    else if (line.startsWith('Product')) {
-      const nextLine = lines[i + 1];
-      if (nextLine) data.productName = nextLine.trim();
+    // Product Name - look for the line that says "Product" and get the next line
+    else if (cleanLine === 'Product' && i + 1 < lines.length) {
+      data.productName = lines[i + 1].trim();
+      console.log('✓ Found Product:', data.productName);
     }
     
     // Price (contains quantity info like "30 x $0.15")
-    else if (line.startsWith('Price')) {
-      const nextLine = lines[i + 1];
-      if (nextLine) {
-        // Parse "30 x $0.15" format
-        const match = nextLine.match(/(\d+)\s*x/);
-        if (match) {
-          data.quantity = parseInt(match[1]);
-        }
-        data.price = nextLine.trim();
+    else if (cleanLine === 'Price' && i + 1 < lines.length) {
+      const priceLine = lines[i + 1].trim();
+      data.price = priceLine;
+      
+      // Parse "30 x $0.15" format
+      const match = priceLine.match(/(\d+)\s*x/);
+      if (match) {
+        data.quantity = parseInt(match[1]);
+        console.log('✓ Found Quantity:', data.quantity);
       }
     }
     
-    // In game name (custom field)
-    else if (line.startsWith('In game name') || line.toLowerCase().includes(CONFIG.customFieldName)) {
-      const nextLine = lines[i + 1];
-      if (nextLine) data.inGameName = nextLine.trim();
+    // In game name - look for exact match with your custom field name
+    else if (cleanLine === 'In game name' && i + 1 < lines.length) {
+      data.inGameName = lines[i + 1].trim();
+      console.log('✓ Found In game name:', data.inGameName);
+    }
+    // Also try with the CONFIG custom field name
+    else if (cleanLine === CONFIG.customFieldName && i + 1 < lines.length) {
+      data.inGameName = lines[i + 1].trim();
+      console.log('✓ Found custom field:', data.inGameName);
     }
   }
 
   // Validate we have the required data
   if (!data.inGameName) {
     console.log('⚠ Missing in-game name in webhook');
+    console.log('Available lines:', lines.filter(l => l.trim()).map(l => l.replace(/\*\*/g, '')));
     return null;
   }
 
+  console.log('✅ Successfully parsed purchase data:', data);
   return data;
 }
 
@@ -443,9 +460,12 @@ app.post('/webhook/sellauth', async (req, res) => {
   }
 });
 
-// Webhook endpoint for Discord (keep for backwards compatibility)
+// Webhook endpoint for Discord (updated parser)
 app.post('/webhook/discord', async (req, res) => {
   console.log('\n=== Discord Webhook Received ===');
+  console.log('📦 Raw Request Body:');
+  console.log(JSON.stringify(req.body, null, 2));
+  console.log('=====================================\n');
 
   try {
     const purchaseData = parseDiscordWebhook(req.body);
@@ -459,6 +479,7 @@ app.post('/webhook/discord', async (req, res) => {
     res.status(200).send('OK');
   } catch (error) {
     console.error('✗ Error processing webhook:', error);
+    console.error('Stack trace:', error.stack);
     res.status(500).send('Internal Server Error');
   }
 });
