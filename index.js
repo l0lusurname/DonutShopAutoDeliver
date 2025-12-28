@@ -56,7 +56,6 @@ function parseProductConfig(configString) {
 function validateConfig() {
   const required = [
     { key: 'MC_USERNAME', value: CONFIG.minecraft.username },
-    { key: 'DISCORD_WEBHOOK_URL', value: CONFIG.discord.webhookUrl },
   ];
 
   const missing = required.filter(r => !r.value);
@@ -488,7 +487,6 @@ function start() {
   console.log(`  Minecraft Server: ${CONFIG.minecraft.host}:${CONFIG.minecraft.port}`);
   console.log(`  Bot Username: ${CONFIG.minecraft.username}`);
   console.log(`  Using Password: ${CONFIG.minecraft.password ? 'Yes' : 'No'}`);
-  console.log(`  Discord Webhook: ${CONFIG.discord.webhookUrl ? 'Configured' : 'Not configured'}`);
   console.log(`  Products Configured: ${Object.keys(CONFIG.products).length}`);
   console.log(`  Custom Field Name: ${CONFIG.customFieldName}`);
   console.log('');
