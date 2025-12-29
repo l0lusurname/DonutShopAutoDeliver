@@ -351,11 +351,6 @@ async function processPurchase(data) {
 
   console.log('Matched Product ID:', matchedProductId);
 
-  // Execute the on-purchase command (e.g., /afk 33)
-  if (productConfig.onPurchaseCommand) {
-    queueCommand(productConfig.onPurchaseCommand);
-  }
-
   // Calculate total amount to pay
   const totalAmount = productConfig.amountPerUnit * data.quantity;
   const formattedAmount = formatAmount(totalAmount);
