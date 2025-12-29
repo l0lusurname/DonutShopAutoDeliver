@@ -104,17 +104,31 @@ function createBot() {
   bot.on('kicked', (reason) => {
     console.log('✗ Bot was kicked:', reason);
     isReady = false;
+    bot = null;
+    console.log('⏳ Reconnecting in 5 seconds...');
     setTimeout(createBot, 5000);
   });
 
   bot.on('end', () => {
     console.log('✗ Bot disconnected');
     isReady = false;
+    bot = null;
+    console.log('⏳ Reconnecting in 5 seconds...');
     setTimeout(createBot, 5000);
   });
 
   bot.on('error', (err) => {
     console.error('✗ Bot error:', err);
+    // Don't reconnect on error, let 'end' event handle it
+  });
+
+  bot.on('death', () => {
+    console.log('💀 Bot died, respawning...');
+    setTimeout(() => {
+      if (bot && isReady) {
+        bot.chat('/respawn');
+      }
+    }, 2000);
   });
 
   bot.on('message', (message) => {
